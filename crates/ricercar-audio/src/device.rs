@@ -26,6 +26,9 @@ pub enum DeviceKind {
     Null,
     /// Sink writing raw container bytes to a file (testing / bit-exact checks).
     File,
+    /// UPnP renderer on the network (`upnp:<uuid>`): it fetches and decodes
+    /// the stream itself, out of our sight.
+    Network,
 }
 
 impl DeviceKind {
@@ -46,6 +49,8 @@ pub fn classify(name: &str) -> DeviceKind {
         DeviceKind::File
     } else if name.starts_with("hw:") {
         DeviceKind::Hardware
+    } else if name.starts_with("upnp:") {
+        DeviceKind::Network
     } else {
         DeviceKind::Virtual
     }
@@ -380,9 +385,13 @@ pub(crate) fn supported_containers(hw: &alsa::pcm::HwParams) -> Vec<Container> {
 
 /// Query what an ALSA device accepts. Opens the PCM (non-blocking, so a busy
 /// device errors out instead of hanging) but never starts it: nothing is
-/// played. `null` and `file:` sinks report unrestricted caps.
+/// played. `null` and `file:` sinks, and network renderers (which decode
+/// themselves), report unrestricted caps.
 pub fn probe_device(name: &str) -> Result<DeviceCaps> {
-    if matches!(classify(name), DeviceKind::Null | DeviceKind::File) {
+    if matches!(
+        classify(name),
+        DeviceKind::Null | DeviceKind::File | DeviceKind::Network
+    ) {
         return Ok(DeviceCaps::unrestricted());
     }
     let err = |e: alsa::Error| AudioError::Alsa {

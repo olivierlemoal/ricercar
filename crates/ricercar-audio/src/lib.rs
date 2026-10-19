@@ -24,8 +24,9 @@ pub use error::{AudioError, Result};
 pub use fmt::{Container, PcmFormat, Wire, negotiate};
 pub use gain::{GainStage, TrackOpts};
 pub use player::{
-    ChainInfo, DsdChain, EndReason, EngineEvent, PlayerHandle, PlayerShared, Subscriber,
-    TransportStatus, spawn_player, spawn_player_with_sink,
+    ChainInfo, DsdChain, EndReason, EngineCommand, EngineEvent, PlayerHandle, PlayerShared,
+    RemoteDriver, RemoteEngine, Subscriber, TransportStatus, register_remote_driver, spawn_player,
+    spawn_player_with_sink,
 };
 pub use redact::{redact_url, redact_urls};
 pub use sink::AudioSink;

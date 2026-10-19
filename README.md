@@ -122,6 +122,8 @@ Most Linux players either sound right or look right. ricercar tries to do both:
 ### Network & integration
 - **UPnP AV MediaRenderer + OpenHome** (Product, Playlist, Info, Time, Volume) on one device
 - **UPnP MediaServer**: browse your library from any DLNA app
+- **Network outputs**: play to a UPnP / DLNA renderer (a network amplifier,
+  a streamer) chosen like any other output
 - **Choice of network interface**: announce and serve on one interface
   only (VPN, Docker, virtual machines)
 - **MPRIS**: media keys, desktop widgets, `playerctl`
@@ -362,6 +364,24 @@ For an always-on audio box:
 systemctl --user enable --now ricercar   # uses dist/ricercar.service
 ```
 
+## 🔈 Play to a network streamer
+
+A UPnP / DLNA renderer on your network (an amplifier such as a Marantz or
+Denon with HEOS, a streamer, a TV) can be the audio output. **Settings →
+Audio output** lists the renderers found on the network after your sound
+cards; pick one and play as usual. Local files, plugin tracks and radios
+all go there; the renderer's own volume is the one the player bar shows and
+changes.
+
+ricercar is the control point: it hands the renderer an address on its own
+small HTTP server for each track and follows what the renderer reports. The
+renderer fetches and decodes the stream itself, so ricercar cannot see what
+reaches its DAC: a network output is never shown as bit-perfect. Local files
+and streams go out as they are (FLAC stays FLAC); CUE tracks, SACD images
+and DSD files are sent as PCM WAV. ReplayGain and the preamp do not apply.
+`ricercar --print-devices` lists the renderers too (`upnp:<uuid>`, usable
+as `--device` or `device` in `[audio]`).
+
 ## 🎚️ Bit-perfect, for real
 
 <img align="right" width="45%" src="docs/screenshots/signal-path.jpg" alt="Signal path view">
@@ -551,6 +571,10 @@ itself. Plugins you declare are separate programs: what they contact is up
 to them. ricercar tells them the interface language, so they can translate
 their pages, and, only for plugins that ask for it, what you play (see
 their settings to turn that off).
+
+On your local network, ricercar also looks for UPnP renderers (an SSDP
+search) when the audio outputs are listed, and a renderer chosen as the
+output fetches the tracks it plays from ricercar.
 
 ## 🤖 How it's built
 

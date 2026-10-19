@@ -407,6 +407,10 @@ msgid "SHARED"
 msgstr "COMPARTIDO"
 
 msgctxt "SettingsPage"
+msgid "NETWORK"
+msgstr "RED"
+
+msgctxt "SettingsPage"
 msgid "NOT CONNECTED"
 msgstr "NO CONECTADO"
 
@@ -1603,6 +1607,10 @@ msgid "SHARED"
 msgstr "COMPARTIDO"
 
 msgctxt "SetupOutput"
+msgid "NETWORK"
+msgstr "RED"
+
+msgctxt "SetupOutput"
 msgid "NOT CONNECTED"
 msgstr "NO CONECTADO"
 
@@ -1689,6 +1697,10 @@ msgstr "Bit-perfect (recomendado)"
 msgctxt "SetupAssistant"
 msgid "Shared"
 msgstr "Compartidas"
+
+msgctxt "SetupAssistant"
+msgid "Network"
+msgstr "Red"
 
 msgctxt "SetupAssistant"
 msgid "Sample rates"

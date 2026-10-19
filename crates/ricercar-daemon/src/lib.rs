@@ -20,6 +20,8 @@ mod scrobble;
 /// Up, non-loopback IPv4 interfaces (name, address) the UPnP services can
 /// be limited to.
 pub use ricercar_upnp::interfaces as network_interfaces;
+/// UPnP renderers on the network, as audio outputs (`upnp:<uuid>`).
+pub use ricercar_upnp::output as network_outputs;
 
 /// Command-line overrides on top of the config file.
 #[derive(Debug, Clone, Default)]
@@ -103,6 +105,14 @@ pub fn print_devices() {
                 ""
             },
         );
+    }
+    for r in network_outputs::discover(std::time::Duration::from_secs(2)) {
+        let model = if r.model.is_empty() {
+            String::new()
+        } else {
+            format!("{}, ", r.model)
+        };
+        println!("{:<14} {} ({model}UPnP renderer)", r.device, r.name);
     }
 }
 
@@ -382,7 +392,9 @@ pub fn startup(args: Args, hooks: Hooks) -> Result<AppContext, Box<dyn std::erro
     let lib = Arc::new(Library::open(&db)?);
     let covers = Arc::new(CoverCache::new(CoverCache::default_dir()));
 
+    network_outputs::install();
     let ctl = Arc::new(Controller::new(lib.clone(), &cfg.audio.device));
+    network_outputs::attach(&ctl);
     let plugins = ricercar_core::plugin::PluginHost::new(
         env!("CARGO_PKG_VERSION"),
         config::data_dir(),

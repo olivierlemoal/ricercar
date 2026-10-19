@@ -61,7 +61,14 @@ fn devices(ui: &Ui) -> String {
         lines.push(line);
     }
     if !lines.iter().any(|l| l.contains(" · selected")) {
-        lines.push(format!("- {current} · selected"));
+        if ricercar_audio::device::classify(&current) == ricercar_audio::DeviceKind::Network {
+            // A UPnP renderer: not in the local list, named by the last search.
+            let name = ricercar_daemon::network_outputs::known_name(&current)
+                .unwrap_or_else(|| "name unknown".into());
+            lines.push(format!("- {current} · {name} · UPnP renderer · selected"));
+        } else {
+            lines.push(format!("- {current} · selected"));
+        }
     }
     lines.join("\n")
 }

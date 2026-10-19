@@ -9,7 +9,7 @@ Everything a newcomer needs to implement a feature end to end. Read
 |---|---|---|
 | `ricercar-audio` | Decoding (symphonia), DSD (`dsd/`), ALSA output, gapless, ReplayGain, HTTP streaming | `PlayerHandle` (`player.rs`), `device.rs` (`list_devices`, `probe_device`), `sink.rs` (`null` / `file:` sinks) |
 | `ricercar-core` | Library (SQLite + FTS5), queue controller, config, covers, file watcher | `Library` (`library.rs`), `Controller` / `CtlEvent` / `CtlState` / `QueueItem` (`controller.rs`), `Config` + XDG paths (`config.rs`), `CoverCache` (`covers.rs`) |
-| `ricercar-upnp` | UPnP AV + OpenHome renderer, MediaServer, SSDP, GENA | `start_with`, `RendererHandle` (`lib.rs`), one file per service |
+| `ricercar-upnp` | UPnP AV + OpenHome renderer, MediaServer, SSDP, GENA; UPnP renderers as network outputs (control point) | `start_with`, `RendererHandle` (`lib.rs`), one file per service, `output/` |
 | `ricercar-mpris` | MPRIS D-Bus server (zbus) | `lib.rs` |
 | `ricercar-online` | Cover Art Archive, lrclib lyrics, radio-browser, ListenBrainz / Last.fm | one module per service, offline queues in `scrobble.rs` |
 | `ricercar-daemon` | Wires everything into an `AppContext`; the headless `ricercar-daemon` binary | `AppContext` (`lib.rs`) |
@@ -28,6 +28,16 @@ the audio `PlayerHandle` and publishes `CtlEvent`s on a bus. Subscribers are
 the UI (`player.rs::wire`), MPRIS, UPnP eventing and the scrobblers. Nothing
 reads the player directly. Subscribe with `Controller::subscribe()`, read the
 current `CtlState` with `Controller::lock()` (keep the guard short).
+
+Network outputs (`upnp:<uuid>`, `DeviceKind::Network`) have no sink:
+`spawn_player` hands their commands to the driver registered for their
+prefix (`register_remote_driver`). `ricercar_upnp::output::install`
+registers `upnp:`, which drives the renderer over AVTransport /
+RenderingControl, serves it each track from its own HTTP server
+(`output/serve.rs`) and turns the polled transport state into the usual
+`EngineEvent`s, plus `EngineEvent::Volume` for the renderer's own volume.
+The controller and everything downstream are unchanged. Tests:
+`output/tests.rs` plays to a ricercar renderer on loopback.
 
 ### Cue sheets
 

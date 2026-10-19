@@ -194,6 +194,16 @@ pub fn describe(ui: &Ui, device: &str) -> Shown {
             absent: None,
         };
     }
+    if ricercar_audio::device::classify(device) == ricercar_audio::DeviceKind::Network {
+        // A UPnP renderer: the name it gave when last found or used.
+        let name = ricercar_daemon::network_outputs::known_name(device)
+            .unwrap_or_else(|| t("UPnP renderer").to_string());
+        return Shown {
+            label: name.clone(),
+            playing: name,
+            absent: None,
+        };
+    }
     let saved = ui.saved_state.borrow();
     let remembered = pipewire_node(device).and_then(|n| saved.device_name(n));
     STATE.with(|s| resolve(device, s.borrow().seen.as_ref(), remembered))

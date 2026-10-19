@@ -511,5 +511,9 @@
 "You can change all of this later in Settings.": "Puoi cambiare tutto questo più tardi nelle Impostazioni.",
 "None": "Nessuno",
 "Not signed in": "Accesso non eseguito",
-"The plugin catalogue could not be read (offline?). You can add plugins later from the Plugins page.": "Impossibile leggere il catalogo dei plugin (offline?). Puoi aggiungere plugin più tardi dalla pagina Plugin."
+"The plugin catalogue could not be read (offline?). You can add plugins later from the Plugins page.": "Impossibile leggere il catalogo dei plugin (offline?). Puoi aggiungere plugin più tardi dalla pagina Plugin.",
+"NETWORK": "RETE",
+"UPnP renderer": "Renderer UPnP",
+"UPnP renderer (decodes the stream itself)": "renderer UPnP (decodifica lo stream da sé)",
+"A network renderer fetches and decodes the stream itself: ricercar cannot check what reaches its DAC, so it is never shown as bit-perfect.": "Un renderer di rete scarica e decodifica lo stream da sé: ricercar non può verificare cosa arriva al suo DAC, quindi non risulta mai bit-perfect."
 }

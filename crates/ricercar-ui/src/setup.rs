@@ -177,16 +177,17 @@ pub fn summary_lines(s: &Summary) -> Vec<(String, String)> {
     ]
 }
 
-/// Listed outputs, and a PipeWire one chosen earlier; not the placeholder
-/// rows of the null and file sinks.
+/// Listed outputs, a PipeWire one chosen earlier and UPnP renderers; not
+/// the placeholder rows of the null and file sinks.
 fn offerable(r: &DeviceRow) -> bool {
-    r.hardware || r.shared || r.absent
+    r.hardware || r.shared || r.absent || r.network
 }
 
-/// Outputs offered: hardware first, then shared ones, in list order.
+/// Outputs offered: hardware first, then shared ones, then UPnP renderers,
+/// in list order.
 pub fn offered(rows: &[DeviceRow]) -> Vec<DeviceRow> {
     let mut out: Vec<DeviceRow> = rows.iter().filter(|r| offerable(r)).cloned().collect();
-    out.sort_by_key(|r| !r.hardware);
+    out.sort_by_key(|r| (!r.hardware, r.network));
     for r in &mut out {
         r.selected = false;
         r.expanded = false;
@@ -242,9 +243,11 @@ pub fn open(ui: &Rc<Ui>) {
     show_folders(ui);
     refresh_plugins(ui);
     go(ui, LANGUAGE);
-    // Lists the outputs (and calls `refresh`), then reads the cards.
+    // Lists the outputs (and calls `refresh`), then reads the cards and
+    // looks for renderers on the network.
     crate::extras::refresh_devices(ui);
     crate::extras::probe_devices(ui);
+    crate::extras::find_renderers(ui);
 }
 
 /// Show step `step`, reading what it needs.
@@ -562,6 +565,13 @@ pub fn refresh(ui: &Ui, rows: &[DeviceRow]) {
                 t("Its capabilities could not be read (it may be busy). You can continue anyway."),
             ),
         }
+    } else if dev.network {
+        (
+            String::new(),
+            t(
+                "A network renderer fetches and decodes the stream itself: ricercar cannot check what reaches its DAC, so it is never shown as bit-perfect.",
+            ),
+        )
     } else {
         (
             String::new(),
@@ -604,6 +614,9 @@ fn fill_summary(ui: &Ui) {
     let dev = app.get_setup_dev();
     let output = if dev.name.is_empty() {
         String::new()
+    } else if dev.network {
+        // `upnp:<uuid>` says nothing to the reader: its name.
+        dev.desc.to_string()
     } else {
         format!("{} ({})", dev.desc, dev.name)
     };
@@ -948,9 +961,26 @@ mod tests {
                 selected: true,
                 ..Default::default()
             },
+            DeviceRow {
+                name: "upnp:4d2f7c1a-9b3e-4c56-8a01-2b7d9e6f3c40".into(),
+                desc: "Salon".into(),
+                network: true,
+                ..Default::default()
+            },
+            row("pulse", "PulseAudio", false),
         ];
         let names: Vec<String> = offered(&rows).iter().map(|r| r.name.to_string()).collect();
-        assert_eq!(names, ["hw:0,0", "hw:2,0", "default", "pipewire"]);
+        assert_eq!(
+            names,
+            [
+                "hw:0,0",
+                "hw:2,0",
+                "default",
+                "pipewire",
+                "pulse",
+                "upnp:4d2f7c1a-9b3e-4c56-8a01-2b7d9e6f3c40"
+            ]
+        );
         assert_eq!(offered(&rows)[1].desc, "BIG KNOB STUDIO");
         assert!(offered(&rows).iter().all(|r| !r.selected));
     }

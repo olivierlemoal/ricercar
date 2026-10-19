@@ -771,8 +771,11 @@ fn update_chain(ui: &Ui, st: &CtlState) {
             state: 0,
         });
     }
-    // Volume only appears when it changes the samples.
+    // Volume only appears when it changes the samples. A UPnP renderer
+    // applies its own volume to the stream it fetched: nothing of ours.
+    let network = c.device_kind == DeviceKind::Network;
     let gain_touch = !gain_locked
+        && !network
         && (st.muted
             || st.volume < 100
             || (!c.bit_perfect && hardware && c.volume == 100 && dsd.is_none()));
@@ -831,6 +834,14 @@ fn update_chain(ui: &Ui, st: &CtlState) {
         ),
         DeviceKind::Null => (t("Null sink: audio discarded").to_string(), 1),
         DeviceKind::File => (format!("{} · {}", c.device, t("written to a file")), 1),
+        DeviceKind::Network => (
+            format!(
+                "{} · {}",
+                output.label,
+                t("UPnP renderer (decodes the stream itself)")
+            ),
+            1,
+        ),
     };
     hops.push(ChainHop {
         label: t("Device").into(),

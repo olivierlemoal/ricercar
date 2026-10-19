@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+crossbeam-channel.workspace = true
 if-addrs = "0.15.0"
 quick-xml = "0.42.0"
 ricercar-audio = { version = "0.10.0", path = "../ricercar-audio" }
@@ -13,3 +14,4 @@ ricercar-core.workspace = true
 socket2 = { version = "0.6.5", features = ["all"] }
 thiserror.workspace = true
 tracing.workspace = true
+ureq = "2.12"

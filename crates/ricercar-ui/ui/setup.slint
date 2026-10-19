@@ -61,10 +61,11 @@ component SetupOutput inherits Rectangle {
             spacing: 2px;
             horizontal-stretch: 1;
             Text { text: dev.desc; font-size: Theme.fs-md; font-weight: 500; color: Theme.text; overflow: elide; }
-            Text { text: dev.name; font-size: Theme.fs-sm; color: Theme.text2; overflow: elide; }
+            Text { text: dev.network ? dev.detail : dev.name; font-size: Theme.fs-sm; color: Theme.text2; overflow: elide; }
         }
         if dev.hardware: Badge { y: (parent.height - self.height) / 2; text: @tr("BIT-PERFECT"); tint: Theme.good; }
         if dev.shared: Badge { y: (parent.height - self.height) / 2; text: @tr("SHARED"); tint: Theme.warn; }
+        if dev.network: Badge { y: (parent.height - self.height) / 2; text: @tr("NETWORK"); tint: Theme.warn; }
         if dev.absent: Badge { y: (parent.height - self.height) / 2; text: @tr("NOT CONNECTED"); tint: Theme.warn; }
     }
 }
@@ -270,7 +271,8 @@ export component SetupAssistant inherits Rectangle {
                         width: fl.width;
                         for d[i] in App.setup-outputs: VerticalLayout {
                             if d.hardware && i == 0: SetupHeading { text: @tr("Bit-perfect (recommended)"); }
-                            if !d.hardware && (i == 0 || App.setup-outputs[max(i - 1, 0)].hardware): SetupHeading { text: @tr("Shared"); }
+                            if !d.hardware && !d.network && (i == 0 || App.setup-outputs[max(i - 1, 0)].hardware): SetupHeading { text: @tr("Shared"); }
+                            if d.network && (i == 0 || !App.setup-outputs[max(i - 1, 0)].network): SetupHeading { text: @tr("Network"); }
                             SetupOutput { dev: d; }
                         }
                     }

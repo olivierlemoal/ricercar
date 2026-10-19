@@ -182,11 +182,17 @@ pub fn serve_media(r: &Renderer, req: &Request, stream: &mut TcpStream) {
             None => http::not_found(stream),
         };
     }
-    let Ok(mut file) = File::open(&path) else {
+    serve_file(&path, req, stream);
+}
+
+/// A file from disk with Range support (the caller decided it may be served).
+pub fn serve_file(path: &std::path::Path, req: &Request, stream: &mut TcpStream) {
+    let head_only = req.method == "HEAD";
+    let Ok(mut file) = File::open(path) else {
         return http::not_found(stream);
     };
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    let mime = mime_of(&path_str);
+    let mime = mime_of(&path.to_string_lossy());
     let mut headers = vec![
         ("CONTENT-TYPE", mime.to_string()),
         ("ACCEPT-RANGES", "bytes".to_string()),
@@ -246,7 +252,7 @@ fn wav_header(rate: u32, channels: u16, bytes: u16, data_len: u32) -> Vec<u8> {
 /// SACD track as a WAV of its conversion to PCM. Range requests are not
 /// served: the length is known, positions in it would need decoding up to
 /// them.
-fn serve_wav(uri: &str, head_only: bool, stream: &mut TcpStream) {
+pub fn serve_wav(uri: &str, head_only: bool, stream: &mut TcpStream) {
     let Ok(mut src) = ricercar_audio::TrackSource::open(uri) else {
         return http::not_found(stream);
     };

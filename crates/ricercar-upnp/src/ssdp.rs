@@ -167,7 +167,7 @@ pub fn named_iface(name: &str) -> Option<Iface> {
         })
 }
 
-fn ifaces() -> Vec<Iface> {
+pub(crate) fn ifaces() -> Vec<Iface> {
     let mut v: Vec<Iface> = if_addrs::get_if_addrs()
         .map(|l| {
             l.into_iter()

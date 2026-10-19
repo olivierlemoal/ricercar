@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant};
 
 use ricercar_audio::TrackOpts;
+use ricercar_audio::device::DeviceKind;
 use ricercar_audio::dsd::DsdMode;
 use ricercar_audio::player::{ChainInfo, EngineEvent, PlayerHandle, TransportStatus};
 use serde::{Deserialize, Serialize};
@@ -421,15 +422,22 @@ pub struct Controller {
 }
 
 fn chain_stub(device: &str) -> ChainInfo {
+    let kind = ricercar_audio::device::classify(device);
     ChainInfo {
         device: device.into(),
-        device_kind: ricercar_audio::device::classify(device),
+        device_kind: kind,
         format: None,
         container: None,
         volume: 100,
-        bit_perfect: true,
+        bit_perfect: kind != DeviceKind::Network,
         dsd: None,
     }
+}
+
+/// A network renderer keeps its own volume: we follow it rather than
+/// impose ours (a switch to it must not jump the amplifier to our level).
+fn own_volume(device: &str) -> bool {
+    ricercar_audio::device::classify(device) == DeviceKind::Network
 }
 
 /// xorshift64*: good enough for queue shuffles, no extra dependency.
@@ -597,6 +605,9 @@ impl Controller {
                             Some(EngineEvent::Buffered { uri, ranges, total }) => {
                                 bridge.on_buffered(&uri, &ranges, total)
                             }
+                            Some(EngineEvent::Volume { percent, muted }) => {
+                                bridge.on_output_volume(percent, muted)
+                            }
                             Some(EngineEvent::TrackEnded { .. }) | None => {}
                         }
                         let save_due = last_save.elapsed() >= Duration::from_secs(10);
@@ -708,8 +719,10 @@ impl Controller {
         };
         self.player().stop();
         let handle = ricercar_audio::player::spawn_player(name);
-        handle.set_volume(vol);
-        handle.set_mute(muted);
+        if !own_volume(name) {
+            handle.set_volume(vol);
+            handle.set_mute(muted);
+        }
         handle.set_gain(*self.rg_preamp.lock().unwrap());
         handle.set_dsd_mode(self.dsd_mode_for(name));
         *self.player() = handle;
@@ -1242,7 +1255,7 @@ impl Controller {
                 st.muted = false;
             }
         }
-        if on {
+        if on && !own_volume(&self.device_name()) {
             let p = self.player();
             p.set_volume(100);
             p.set_mute(false);
@@ -1950,6 +1963,19 @@ impl Bridge {
         if status != TransportStatus::Stopped {
             self.rearm();
         }
+    }
+
+    /// The output's own volume (a network renderer) is the one shown.
+    fn on_output_volume(&self, percent: u32, muted: bool) {
+        {
+            let mut st = self.lock_state();
+            if (st.volume, st.muted) == (percent, muted) {
+                return;
+            }
+            st.volume = percent.min(100);
+            st.muted = muted;
+        }
+        self.events.publish(CtlEvent::VolumeChanged);
     }
 
     /// A resolved URL the server refused (expired, revoked…) is resolved

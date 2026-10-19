@@ -20,6 +20,7 @@ mod http;
 mod media;
 mod notify;
 mod openhome;
+pub mod output;
 mod soap;
 mod ssdp;
 mod xml;

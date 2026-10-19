@@ -407,6 +407,10 @@ msgid "SHARED"
 msgstr "GETEILT"
 
 msgctxt "SettingsPage"
+msgid "NETWORK"
+msgstr "NETZWERK"
+
+msgctxt "SettingsPage"
 msgid "NOT CONNECTED"
 msgstr "NICHT VERBUNDEN"
 
@@ -1603,6 +1607,10 @@ msgid "SHARED"
 msgstr "GETEILT"
 
 msgctxt "SetupOutput"
+msgid "NETWORK"
+msgstr "NETZWERK"
+
+msgctxt "SetupOutput"
 msgid "NOT CONNECTED"
 msgstr "NICHT VERBUNDEN"
 
@@ -1689,6 +1697,10 @@ msgstr "Bit-perfect (empfohlen)"
 msgctxt "SetupAssistant"
 msgid "Shared"
 msgstr "Geteilt"
+
+msgctxt "SetupAssistant"
+msgid "Network"
+msgstr "Netzwerk"
 
 msgctxt "SetupAssistant"
 msgid "Sample rates"

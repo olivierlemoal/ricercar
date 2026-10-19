@@ -511,5 +511,9 @@
 "You can change all of this later in Settings.": "これらはすべて後で設定から変更できます。",
 "None": "なし",
 "Not signed in": "未サインイン",
-"The plugin catalogue could not be read (offline?). You can add plugins later from the Plugins page.": "プラグインカタログを読み込めませんでした（オフライン？）。後でプラグインのページから追加できます。"
+"The plugin catalogue could not be read (offline?). You can add plugins later from the Plugins page.": "プラグインカタログを読み込めませんでした（オフライン？）。後でプラグインのページから追加できます。",
+"NETWORK": "ネットワーク",
+"UPnP renderer": "UPnP レンダラー",
+"UPnP renderer (decodes the stream itself)": "UPnP レンダラー（ストリームを自身でデコード）",
+"A network renderer fetches and decodes the stream itself: ricercar cannot check what reaches its DAC, so it is never shown as bit-perfect.": "ネットワークレンダラーはストリームを自身で取得・デコードします。ricercar はその DAC に届く内容を確認できないため、ビットパーフェクトとは表示されません。"
 }

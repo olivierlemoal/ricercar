@@ -406,6 +406,10 @@ msgid "SHARED"
 msgstr "共有"
 
 msgctxt "SettingsPage"
+msgid "NETWORK"
+msgstr "ネットワーク"
+
+msgctxt "SettingsPage"
 msgid "NOT CONNECTED"
 msgstr "未接続"
 
@@ -1590,6 +1594,10 @@ msgid "SHARED"
 msgstr "共有"
 
 msgctxt "SetupOutput"
+msgid "NETWORK"
+msgstr "ネットワーク"
+
+msgctxt "SetupOutput"
 msgid "NOT CONNECTED"
 msgstr "未接続"
 
@@ -1676,6 +1684,10 @@ msgstr "Bit-perfect（推奨）"
 msgctxt "SetupAssistant"
 msgid "Shared"
 msgstr "共有"
+
+msgctxt "SetupAssistant"
+msgid "Network"
+msgstr "ネットワーク"
 
 msgctxt "SetupAssistant"
 msgid "Sample rates"

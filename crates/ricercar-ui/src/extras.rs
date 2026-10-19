@@ -37,6 +37,10 @@ pub struct Extras {
     pub expanded: std::collections::HashSet<String>,
     probing: std::collections::HashSet<String>,
     probe_errors: std::collections::HashMap<String, String>,
+    /// UPnP renderers found by the last network search (`None` before the
+    /// first answer), and a search in flight.
+    renderers: Option<Vec<ricercar_daemon::network_outputs::Renderer>>,
+    searching: bool,
     /// Library sample rates by library revision.
     histogram: Option<(u64, Vec<ricercar_core::RateCount>)>,
     fav_model: Option<Rc<VecModel<StationRow>>>,
@@ -333,6 +337,7 @@ pub fn load_settings(ui: &Rc<Ui>) {
     let app = ui.app();
     refresh_devices(ui);
     probe_devices(ui);
+    find_renderers(ui);
     app.set_replaygain(match cfg.audio.replaygain {
         ReplayGain::Off => 0,
         ReplayGain::Track => 1,
@@ -610,6 +615,8 @@ pub fn refresh_devices(ui: &Ui) {
                 hardware,
                 absent: false,
                 shared: d.kind == ricercar_audio::DeviceKind::Virtual,
+                network: false,
+                detail: "".into(),
                 selected: d.name == current,
                 desc: d
                     .description
@@ -643,30 +650,65 @@ pub fn refresh_devices(ui: &Ui) {
             }
         })
         .collect();
+    // UPnP renderers on the network, as the last search found them: they
+    // fetch and decode the stream themselves (no capabilities, no DSD).
+    let renderers = ui.extras.borrow().renderers.clone();
+    let unnamed = t("UPnP renderer");
+    rows.extend(renderers.iter().flatten().map(|r| {
+        DeviceRow {
+            selected: r.device == current,
+            network: true,
+            detail: if r.model.is_empty() {
+                unnamed.to_string()
+            } else {
+                r.model.clone()
+            }
+            .into(),
+            desc: r.name.as_str().into(),
+            name: r.device.as_str().into(),
+            ..Default::default()
+        }
+    }));
     if !rows.iter().any(|r| r.selected) {
         let null = current == "null";
+        let network =
+            ricercar_audio::device::classify(&current) == ricercar_audio::DeviceKind::Network;
         // A PipeWire output that is not connected now: its remembered name.
         let node = ricercar_audio::device::pipewire_node(&current);
         let absent = node.map(|n| {
             let saved = ui.saved_state.borrow();
             crate::outputs::absent_name(n, saved.device_name(n))
         });
-        rows.push(DeviceRow {
-            desc: if null {
-                t("Null sink").into()
-            } else {
-                absent.clone().unwrap_or_else(|| current.clone())
+        rows.push(if network {
+            // A renderer the last search did not find (none ran yet: not
+            // claimed absent).
+            DeviceRow {
+                desc: crate::outputs::describe(ui, &current).label.into(),
+                absent: renderers.is_some(),
+                detail: unnamed.into(),
+                network: true,
+                name: current.into(),
+                selected: true,
+                ..Default::default()
             }
-            .into(),
-            absent: absent.is_some(),
-            name: if null {
-                t("Discards audio (testing)").into()
-            } else {
-                current
+        } else {
+            DeviceRow {
+                desc: if null {
+                    t("Null sink").into()
+                } else {
+                    absent.clone().unwrap_or_else(|| current.clone())
+                }
+                .into(),
+                absent: absent.is_some(),
+                name: if null {
+                    t("Discards audio (testing)").into()
+                } else {
+                    current
+                }
+                .into(),
+                selected: true,
+                ..Default::default()
             }
-            .into(),
-            selected: true,
-            ..Default::default()
         });
     }
     crate::setup::refresh(ui, &rows);
@@ -730,6 +772,41 @@ pub fn probe_devices(ui: &Rc<Ui>) {
             }
         })
         .expect("spawn probe");
+}
+
+/// How long a search for UPnP renderers listens for answers.
+const RENDERER_SEARCH: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Look for UPnP renderers on the network, off the UI thread (the search
+/// blocks for a couple of seconds); the device list is rebuilt from the
+/// answer. One search at a time, and the headless tours never search.
+pub fn find_renderers(ui: &Ui) {
+    if std::env::var_os("RICERCAR_SNAPSHOT").is_some() {
+        return;
+    }
+    {
+        let mut ex = ui.extras.borrow_mut();
+        if ex.searching {
+            return;
+        }
+        ex.searching = true;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("ricercar-renderers".into())
+        .spawn(|| {
+            let found = ricercar_daemon::network_outputs::discover(RENDERER_SEARCH);
+            post(move |ui| {
+                {
+                    let mut ex = ui.extras.borrow_mut();
+                    ex.searching = false;
+                    ex.renderers = Some(found);
+                }
+                refresh_devices(ui);
+            });
+        });
+    if spawned.is_err() {
+        ui.extras.borrow_mut().searching = false;
+    }
 }
 
 /// "alsa error on device 'hw:1,0': ALSA function 'snd_pcm_open' failed with
@@ -935,6 +1012,12 @@ pub fn select_device(ui: &Ui, name: &str) {
     refresh_devices(ui);
     let shown = match (&desc, ricercar_audio::device::pipewire_node(name)) {
         (Some(desc), Some(_)) => crate::outputs::readable(desc),
+        // A UPnP renderer: its friendly name, not `upnp:<uuid>`.
+        (Some(desc), None)
+            if ricercar_audio::device::classify(name) == ricercar_audio::DeviceKind::Network =>
+        {
+            desc.as_str()
+        }
         _ => name,
     };
     ui.toast(format!("{}: {shown}", t("Output device")), false);
@@ -968,6 +1051,7 @@ pub fn wire(ui: &Rc<Ui>) {
         with_ui(|ui| {
             refresh_devices(ui);
             probe_devices(ui);
+            find_renderers(ui);
         })
     });
     app.on_copy_report(|| with_ui(|ui| crate::diag::copy_report(ui)));

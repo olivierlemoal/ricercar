@@ -51,12 +51,15 @@ pub trait AudioSink: Send {
     }
 }
 
+/// A sink for an ALSA, null or file device. Network renderers have none:
+/// `spawn_player` drives them itself; here they get a sink that discards.
 pub fn make_sink(device: &DeviceInfo) -> Box<dyn AudioSink> {
     match device.kind {
         DeviceKind::Null | DeviceKind::Hardware | DeviceKind::Virtual => {
             Box::new(AlsaSink::new(device.clone()))
         }
         DeviceKind::File => Box::new(FileSink::new(device.clone())),
+        DeviceKind::Network => Box::new(NullSink::new(device.clone())),
     }
 }
 

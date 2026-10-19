@@ -67,10 +67,10 @@ impl DsdMode {
     /// DoP and native DSD only ever go to an output that hands bytes to
     /// the DAC untouched: a `hw:` card, or the null and file sinks. A sound
     /// server or plug device would mix or resample them into noise, so it
-    /// gets PCM.
+    /// gets PCM; so does a network renderer, which is sent PCM.
     pub fn guarded(self, kind: DeviceKind) -> DsdMode {
         match kind {
-            DeviceKind::Virtual => DsdMode::Pcm,
+            DeviceKind::Virtual | DeviceKind::Network => DsdMode::Pcm,
             _ => self,
         }
     }

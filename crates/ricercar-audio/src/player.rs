@@ -109,6 +109,12 @@ pub enum EngineEvent {
         /// HTTP status of a failed fetch (401, 403, 404, 410…).
         http_status: Option<u16>,
     },
+    /// Volume and mute as the output itself has them (a network renderer,
+    /// turned from its own knob or remote).
+    Volume {
+        percent: u32,
+        muted: bool,
+    },
 }
 
 pub struct Subscriber(pub StdReceiver<EngineEvent>);
@@ -250,9 +256,109 @@ impl PlayerHandle {
     }
 }
 
-/// Spawn the audio engine on its own thread.
+/// Spawn the audio engine on its own thread; a network output (`upnp:…`)
+/// gets the driver registered for its prefix with [`register_remote_driver`].
 pub fn spawn_player(device_name: &str) -> PlayerHandle {
-    spawn_player_with_sink(make_sink(&device_info(device_name)))
+    let device = device_info(device_name);
+    if device.kind == DeviceKind::Network {
+        return spawn_remote(device);
+    }
+    spawn_player_with_sink(make_sink(&device))
+}
+
+fn initial_state(device: &DeviceInfo, gain: GainStage) -> PlayerShared {
+    PlayerShared {
+        status: TransportStatus::Stopped,
+        track_uri: None,
+        next_uri: None,
+        pos_ms: 0,
+        dur_ms: None,
+        seekable: false,
+        chain: chain_of(device, None, None, &gain, None),
+        gain,
+        stream_title: None,
+    }
+}
+
+/// What drives a network output: its commands, and the state and events to
+/// keep up to date the way the local engine does.
+pub struct RemoteEngine {
+    pub device: String,
+    pub commands: Receiver<EngineCommand>,
+    pub state: Arc<Mutex<PlayerShared>>,
+    pub hub: Arc<EventHub>,
+}
+
+/// Runs a network output until its command channel closes.
+pub type RemoteDriver = Arc<dyn Fn(RemoteEngine) + Send + Sync>;
+
+/// Drivers by device-name prefix.
+static REMOTE_DRIVERS: Mutex<Vec<(String, RemoteDriver)>> = Mutex::new(Vec::new());
+
+/// Who drives the network outputs whose device name starts with `prefix`
+/// (`upnp:`); register before the first one is spawned. A later call for
+/// the same prefix replaces the driver.
+pub fn register_remote_driver(prefix: &str, driver: RemoteDriver) {
+    let mut drivers = lock(&REMOTE_DRIVERS);
+    drivers.retain(|(p, _)| p != prefix);
+    drivers.push((prefix.to_string(), driver));
+}
+
+/// The driver of `device`: the one with the longest matching prefix.
+fn remote_driver(device: &str) -> Option<RemoteDriver> {
+    lock(&REMOTE_DRIVERS)
+        .iter()
+        .filter(|(p, _)| device.starts_with(p.as_str()))
+        .max_by_key(|(p, _)| p.len())
+        .map(|(_, d)| d.clone())
+}
+
+fn spawn_remote(device: DeviceInfo) -> PlayerHandle {
+    let (tx, rx) = crossbeam_channel::unbounded::<EngineCommand>();
+    let hub = Arc::new(EventHub::default());
+    let alive = Arc::new(AtomicBool::new(true));
+    let state = Arc::new(Mutex::new(initial_state(&device, GainStage::default())));
+    let engine = RemoteEngine {
+        device: device.name,
+        commands: rx,
+        state: state.clone(),
+        hub: hub.clone(),
+    };
+    let alive_t = AliveGuard {
+        alive: alive.clone(),
+        hub: hub.clone(),
+        state: state.clone(),
+    };
+    let driver = remote_driver(&engine.device);
+    std::thread::Builder::new()
+        .name("ricercar-remote".into())
+        .spawn(move || {
+            let _alive = alive_t;
+            match driver {
+                Some(drive) => drive(engine),
+                None => no_driver(engine),
+            }
+        })
+        .expect("spawn remote output");
+    PlayerHandle {
+        tx,
+        state,
+        hub,
+        alive,
+    }
+}
+
+/// Embedders without network support: every track fails to load.
+fn no_driver(engine: RemoteEngine) {
+    for cmd in engine.commands.iter() {
+        if let EngineCommand::Load { .. } = cmd {
+            engine.hub.publish(EngineEvent::Error {
+                message: format!("{}: network outputs are not available", engine.device),
+                uri: None,
+                http_status: None,
+            });
+        }
+    }
 }
 
 /// Spawn the engine on a caller-provided sink (embedding, tests).
@@ -262,17 +368,7 @@ pub fn spawn_player_with_sink(sink: Box<dyn AudioSink>) -> PlayerHandle {
     let hub = Arc::new(EventHub::default());
     let alive = Arc::new(AtomicBool::new(true));
     let gain = GainStage::default();
-    let state = Arc::new(Mutex::new(PlayerShared {
-        status: TransportStatus::Stopped,
-        track_uri: None,
-        next_uri: None,
-        pos_ms: 0,
-        dur_ms: None,
-        seekable: false,
-        chain: chain_of(&device, None, None, &gain, None),
-        gain,
-        stream_title: None,
-    }));
+    let state = Arc::new(Mutex::new(initial_state(&device, gain)));
 
     let engine = Engine {
         device,
