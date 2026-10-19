@@ -515,5 +515,8 @@
 "NETWORK": "RETE",
 "UPnP renderer": "Renderer UPnP",
 "UPnP renderer (decodes the stream itself)": "renderer UPnP (decodifica lo stream da sé)",
+"{plugin} device": "Dispositivo {plugin}",
+"plugin device (fetches and decodes the tracks itself)": "dispositivo di un plugin (scarica e decodifica i brani da sé)",
+"playback devices": "dispositivi di riproduzione",
 "A network renderer fetches and decodes the stream itself: ricercar cannot check what reaches its DAC, so it is never shown as bit-perfect.": "Un renderer di rete scarica e decodifica lo stream da sé: ricercar non può verificare cosa arriva al suo DAC, quindi non risulta mai bit-perfect."
 }

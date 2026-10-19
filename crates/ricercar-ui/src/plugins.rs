@@ -54,6 +54,8 @@ enum Pending {
 #[derive(Default)]
 pub struct PluginsView {
     rev: Option<u64>,
+    /// The host's `outputs_revision` the device rows show.
+    outputs_rev: u64,
     /// Sidebar sections of signed-in plugins, by plugin id.
     sections: HashMap<String, Vec<Item>>,
     loading_sections: std::collections::HashSet<String>,
@@ -261,6 +263,10 @@ pub fn name_of(ui: &Ui, id: &str) -> String {
 
 /// From the player tick: follow plugin status changes.
 pub fn poll(ui: &Rc<Ui>) {
+    let outputs_rev = host(ui).outputs_revision();
+    if std::mem::replace(&mut ui.plugins.borrow_mut().outputs_rev, outputs_rev) != outputs_rev {
+        crate::extras::refresh_devices(ui);
+    }
     let rev = host(ui).revision();
     if ui.plugins.borrow().rev == Some(rev) {
         return;
@@ -2660,6 +2666,7 @@ fn capability_names(caps: &[String]) -> String {
             "search" => Some(t("search")),
             "favorites" => Some(t("favourites")),
             "remote_control" => Some(t("remote control")),
+            "outputs" => Some(t("playback devices")),
             _ => None,
         })
         .collect::<Vec<_>>()

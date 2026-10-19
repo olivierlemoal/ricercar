@@ -198,7 +198,7 @@ page_size = 50
 - Both sides may send requests; ids are unique per sender.
 - **Host → plugin timeouts:**
   - 10 s by default;
-  - 30 s for `auth.complete`;
+  - 30 s for `auth.complete` and `output.play`, 60 s for `output.select`;
   - `track.resolve` is expected to answer within 5 s, and the UI shows a
     loading state after 300 ms.
 - Unknown methods answer `-32601`. Unknown fields are ignored, so fields can
@@ -252,6 +252,7 @@ page_size = 50
 | `playlist_edit` | `playlists.*` | [Playlist editing](#playlist-editing-optional) |
 | `details` | `item.details` | [Details](#details-optional) |
 | `radio` | `radio.next` | [Radio](#radio-optional) |
+| `outputs` | `outputs.changed`, `output.*` | [Outputs](#outputs-optional) |
 - `locale` is ricercar's interface language (Settings → Appearance, `[ui]
   language`), a BCP 47 tag: the system's locale when it is the same
   language (`fr-BE`), else the bare language (`fr`); the system's locale
@@ -625,6 +626,91 @@ With the `radio` capability, the plugin suggests tracks that follow others:
 - "Start radio" on a plugin track, album or artist replaces the queue with
   the answer (the track itself first).
 
+## Outputs (optional)
+
+With the `outputs` capability, a plugin offers **playback devices of its
+own** (for instance the devices of a service's own casting protocol). The
+user picks one in Settings → Audio output like any other output. While it
+is selected, the host plays the queue's items **of that plugin** on it: it
+does not resolve them to URLs, it hands the plugin their refs and the
+device fetches and decodes the audio itself. ricercar keeps its queue, UI,
+MPRIS and scrobbling. A plugin without the capability is never sent
+`output.*`.
+
+**Plugin → host notification `outputs.changed`**, the full list every time
+it changes (`[]` when none, e.g. signed out), at any time after the
+`initialize` answer:
+
+```json
+{"outputs": [{"id": "6f1c2b9e-…", "name": "Salon", "detail": "Marantz MODEL 40n", "badge": "Qobuz Connect"}]}
+```
+
+- `id`: stable across restarts, `[A-Za-z0-9._:-]{1,64}` (other entries are
+  dropped, as are duplicates). `name`: the output's title (its id when
+  empty). `detail`: optional second line (the plugin's name when absent).
+  `badge`: optional, how the device is reached (`Qobuz Connect`, 24
+  characters at most), shown in capitals as its badge; without one the
+  badge reads NETWORK. Translate it with `locale` unless it is a name.
+- The output's device name is `plugin:<plugin id>/<output id>` (stored in
+  `[audio] device`). One that is not in the latest list shows as not
+  connected, and playing on it fails with an error. The list goes when the
+  process stops.
+
+**Host → plugin requests**, only to the plugin owning the output in use.
+All params carry `output` (the output id); results are `null`. An error is
+shown to the user and, for `output.play`, the item is skipped like a track
+that fails to resolve.
+
+| Method | Params | Meaning |
+|---|---|---|
+| `output.select` | `{output}` | The output is in use: chosen by the user, or the configured one at start-up (sent once the plugin lists it). Prepare it (connect, wake it up, make it the active device). May take seconds (60 s timeout). |
+| `output.release` | `{output}` | The user moved to another output, or the host stops the plugin or shuts down: stop using it. |
+| `output.play` | `{output, ref, start_ms}` | Play item `ref` (the plugin's own ref) from `start_ms`, replacing whatever the device plays. Answer once the device accepted the order; that it plays is reported by `output.state`. The host sends `start_ms` 0 and seeks afterwards when it resumes elsewhere. |
+| `output.next` | `{output, ref}` | `ref` (or `null`) follows the current item: the device may play it by itself at the end (gapless). Replaces any previous `next`. |
+| `output.pause` / `output.resume` / `output.stop` | `{output}` | Transport. |
+| `output.seek` | `{output, ms}` | Within the current item. |
+| `output.volume` | `{output, percent?, muted?}` | Device volume 0–100 and/or mute. |
+
+These requests are never retried (they act on a device); `output.release`
+waits 2 s at most, the others 10 s.
+
+**Plugin → host notification `output.state`**, on every change and about
+every second while playing:
+
+```json
+{"output": "6f1c…", "status": "playing", "ref": "track/123", "pos_ms": 61000,
+ "dur_ms": 215000, "volume": 35, "muted": false}
+```
+
+- `status`: `loading`, `playing`, `paused` or `stopped`.
+- `ref`: the item the device is on (absent when none). `pos_ms`, `dur_ms`
+  absent when unknown. `volume`, `muted`: the device's own, absent when
+  unknown.
+- Optional `error: {message, code?}`: the current item failed. The host
+  shows `message` (or the code's meaning) and goes on with the next item.
+
+How the host reads it:
+
+- After `output.play`, the item is loading until the first state with that
+  `ref` and `playing` or `paused`: then it has started. One that has not
+  started within 30 s failed.
+- `ref` moving to the ref last given in `output.next`: the previous item
+  finished and the next one started (gapless).
+- `stopped` with the current ref (or none) within 5 s of `dur_ms`: the item
+  finished; the host then orders the next item itself with `output.play`.
+  `stopped` earlier, or another ref: stopped by someone else (the queue
+  stops).
+- `loading` while an item plays shows as buffering.
+- `volume` / `muted` are the volume shown in ricercar; the host never
+  pushes its own on selection.
+- No state for 20 s while playing, or the plugin stopping, ends playback
+  with an error.
+- Items of other sources (local files, radios, other plugins) are not
+  playable there: error "<output name> plays <plugin name> tracks only",
+  and the item is skipped.
+- The host never calls `track.resolve` for items played on a plugin
+  output. Playback reporting (`playback.*`) goes on as for any output.
+
 ## Settings (optional)
 
 A plugin can declare a few settings of its own (streaming quality, what
@@ -742,6 +828,7 @@ to a UI message and never shows raw text from the plugin as HTML.
 | `ricercar-online` / scrobble | Plugin tracks scrobble from their metadata (`path` is `None`). |
 | `ricercar-online` / lyrics | `LyricsSource::Plugin(id)`; for a `plugin://` track, the plugin (with `lyrics`) then LRCLIB, cached under the URI, `not_found` kept a day. The plugin is asked through a callback (`ricercar-daemon::lyrics`). Synced lines carry the plugin's `words` (`LyricLine::words`), like enhanced LRC. |
 | `ricercar-upnp` | No change. ContentDirectory still serves the local library only. Plugin tracks in the queue are shown with their metadata. |
+| Plugin outputs | `ricercar-audio`: network outputs (`DeviceKind::Network`, `upnp:` and `plugin:`) are driven by drivers registered per device-name prefix (`register_remote_driver`). `ricercar-core`: capability `outputs`; `PluginHost::outputs()` / `outputs_revision()` / `output_name()`; the host registers the `plugin:` driver (`plugin/output.rs`: engine commands → `output.*`, `output.state` → engine events); on a plugin output the controller hands plugin items over by their `plugin://` URI, unresolved, and skips a gapless successor the device failed to start. `ricercar-daemon`: the host is created before the controller. `ricercar-ui`: plugin devices in Settings → Audio output and the setup assistant, refreshed on `outputs.changed`; signal path and diagnostic report. |
 | Docs | README: "Features", "Is this a … client?" FAQ and the promise wording (the core ships no service API; third-party plugins may add catalogues). HACKING.md: plugin host map. |
 
 ### Tests

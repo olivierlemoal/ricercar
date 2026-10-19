@@ -68,7 +68,7 @@ pub enum EndReason {
     Error,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EngineEvent {
     Status {
         status: TransportStatus,
@@ -256,8 +256,9 @@ impl PlayerHandle {
     }
 }
 
-/// Spawn the audio engine on its own thread; a network output (`upnp:…`)
-/// gets the driver registered for its prefix with [`register_remote_driver`].
+/// Spawn the audio engine on its own thread; a network output (`upnp:…`,
+/// `plugin:…`) gets the driver registered for its prefix with
+/// [`register_remote_driver`].
 pub fn spawn_player(device_name: &str) -> PlayerHandle {
     let device = device_info(device_name);
     if device.kind == DeviceKind::Network {

@@ -19,6 +19,7 @@ use crate::library::{Library, Track};
 use crate::meta;
 use crate::plugin::{
     Delivery, PluginError, Purpose, RADIO_LIMIT, Resolved, Resolver, is_plugin_uri,
+    parse_output_device,
 };
 use crate::writer::{Durability, LatestWriter};
 
@@ -403,7 +404,7 @@ pub struct Controller {
     pub state: Arc<Mutex<CtlState>>,
     pending: Arc<Mutex<Pending>>,
     events: Arc<EventHub>,
-    device_name: RwLock<String>,
+    device_name: Arc<RwLock<String>>,
     next_id: Arc<AtomicU64>,
     alive: Arc<AtomicBool>,
     session_path: Arc<Mutex<Option<PathBuf>>>,
@@ -488,7 +489,7 @@ impl Controller {
             })),
             pending: Arc::new(Mutex::new(Pending::default())),
             events: Arc::new(EventHub::default()),
-            device_name: RwLock::new(device.into()),
+            device_name: Arc::new(RwLock::new(device.into())),
             next_id: Arc::new(AtomicU64::new(1)),
             alive: Arc::new(AtomicBool::new(true)),
             session_path: Arc::new(Mutex::new(None)),
@@ -639,6 +640,7 @@ impl Controller {
             resolver: self.resolver.clone(),
             next_id: self.next_id.clone(),
             continuous: self.continuous.clone(),
+            device: self.device_name.clone(),
         }
     }
 
@@ -725,8 +727,9 @@ impl Controller {
         }
         handle.set_gain(*self.rg_preamp.lock().unwrap());
         handle.set_dsd_mode(self.dsd_mode_for(name));
-        *self.player() = handle;
+        // Named first: what the bridge hands the new output depends on it.
         *self.device_name.write().unwrap() = name.into();
+        *self.player() = handle;
         {
             let mut st = self.lock();
             st.chain = chain_stub(name);
@@ -1486,6 +1489,8 @@ struct Bridge {
     resolver: Arc<RwLock<Option<Arc<dyn Resolver>>>>,
     next_id: Arc<AtomicU64>,
     continuous: Arc<AtomicBool>,
+    /// Output device name (shared with the controller).
+    device: Arc<RwLock<String>>,
 }
 
 fn is_network(uri: &str) -> bool {
@@ -1545,6 +1550,13 @@ impl Bridge {
         self.resolver.read().unwrap().clone()
     }
 
+    /// The output is a plugin's device: plugin items go to it as they are
+    /// (it plays its own plugin's refs and refuses anything else), never
+    /// resolved.
+    fn on_plugin_output(&self) -> bool {
+        parse_output_device(&self.device.read().unwrap()).is_some()
+    }
+
     /// ReplayGain values given by a plugin complete the item's own.
     fn with_resolved(info: &TrackInfo, r: &Resolved) -> TrackInfo {
         let mut info = info.clone();
@@ -1558,9 +1570,10 @@ impl Bridge {
     }
 
     /// What the engine gets for an item: its URI, or for a plugin item the
-    /// URL it resolved to (when known and not expired).
+    /// URL it resolved to (when known and not expired); on a plugin output,
+    /// always its URI.
     fn engine_uri(&self, id: u64, info: &TrackInfo) -> Option<String> {
-        if !is_plugin_uri(&info.uri) {
+        if !is_plugin_uri(&info.uri) || self.on_plugin_output() {
             return Some(info.uri.clone());
         }
         let p = self.lock_pending();
@@ -1583,7 +1596,7 @@ impl Bridge {
             st.current_item().cloned()
         };
         let Some(item) = item else { return };
-        if is_plugin_uri(&item.info.uri) {
+        if is_plugin_uri(&item.info.uri) && !self.on_plugin_output() {
             {
                 let mut p = self.lock_pending();
                 p.armed = None;
@@ -1598,6 +1611,11 @@ impl Bridge {
                 .expect("spawn resolve");
             return;
         }
+        self.load_now(&item);
+    }
+
+    /// Hand the engine the item's own URI.
+    fn load_now(&self, item: &QueueItem) {
         let opts = {
             let mut p = self.lock_pending();
             p.armed = None;
@@ -1610,12 +1628,13 @@ impl Bridge {
     }
 
     /// Resolve a plugin item off the controller lock, then load it unless
-    /// the user moved on meanwhile.
+    /// the user moved on meanwhile. A plugin output (switched to meanwhile)
+    /// gets the item itself.
     fn resolve_and_load(&self, item: QueueItem, purpose: Purpose) {
-        let r = match self.resolver() {
+        let r = (!self.on_plugin_output()).then(|| match self.resolver() {
             Some(res) => res.resolve(&item.info.uri, purpose),
             None => Err(crate::plugin::PluginError::NotRunning),
-        };
+        });
         let still_wanted = {
             let st = self.lock_state();
             st.current_item().map(|q| q.id) == Some(item.id)
@@ -1624,6 +1643,9 @@ impl Bridge {
             return;
         }
         self.lock_state().resolving = None;
+        let Some(r) = r else {
+            return self.load_now(&item);
+        };
         match r {
             Ok(res) => {
                 let info = Self::with_resolved(&item.info, &res);
@@ -2076,19 +2098,36 @@ impl Bridge {
         self.events.publish(CtlEvent::Error(message));
         // A track that fails to open is skipped (bounded, to avoid spinning
         // through a queue of unreachable URLs).
-        let skip = {
+        let (skip, failed_next) = {
             let mut p = self.lock_pending();
-            match p.loading.take() {
+            // A plugin output starts the successor it was handed by itself:
+            // when that one fails, it is the item skipped.
+            let failed_next = match (&p.loading, &p.armed, &uri) {
+                (None, Some((id, armed)), Some(u)) if armed == u && self.on_plugin_output() => {
+                    Some(*id)
+                }
+                _ => None,
+            };
+            if failed_next.is_some() {
+                p.armed = None;
+                p.loading = failed_next;
+            }
+            let skip = match p.loading.take() {
                 Some(_) if p.failures < 5 => {
                     p.failures += 1;
                     true
                 }
                 _ => false,
-            }
+            };
+            (skip, failed_next)
         };
         if skip {
             let next = {
-                let st = self.lock_state();
+                let mut st = self.lock_state();
+                if let Some(i) = failed_next.and_then(|id| st.queue.iter().position(|q| q.id == id))
+                {
+                    st.current = Some(i);
+                }
                 st.current.filter(|i| i + 1 < st.queue.len()).map(|i| i + 1)
             };
             if let Some(i) = next {

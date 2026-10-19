@@ -104,12 +104,16 @@ export struct DeviceRow {
     // a system mixer sits in the path (default / pipewire / pulse)
     shared: bool,
     // the chosen output is not connected right now (PipeWire output,
-    // renderer not found)
+    // renderer not found, plugin device not listed)
     absent: bool,
-    // a UPnP renderer (upnp:<uuid>): it fetches and decodes the stream
-    // itself; never expandable (no capabilities, no DSD)
+    // a network output (UPnP renderer upnp:<uuid>, plugin device
+    // plugin:<id>/<output>): it fetches and decodes the stream itself;
+    // never expandable (no capabilities, no DSD)
     network: bool,
-    // second line in place of the device name (network renderers: model)
+    // badge of a network output ("UPNP", "QOBUZ CONNECT"); empty: NETWORK
+    badge: string,
+    // second line in place of the device name (renderers: model; plugin
+    // devices: what the plugin says)
     detail: string,
     selected: bool,
     // capabilities panel (hw: devices)

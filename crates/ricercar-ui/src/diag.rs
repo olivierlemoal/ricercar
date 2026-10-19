@@ -60,8 +60,27 @@ fn devices(ui: &Ui) -> String {
         }
         lines.push(line);
     }
+    // Devices of plugins, as listed now.
+    for o in ui.ctx.plugins.outputs() {
+        let mut line = format!("- {} · {} · {} output", o.device, o.name, o.plugin_name);
+        if o.device == current {
+            line.push_str(" · selected");
+        }
+        lines.push(line);
+    }
     if !lines.iter().any(|l| l.contains(" · selected")) {
-        if ricercar_audio::device::classify(&current) == ricercar_audio::DeviceKind::Network {
+        if ricercar_core::plugin::parse_output_device(&current).is_some() {
+            // A plugin's device it does not list now.
+            let name = ui
+                .ctx
+                .plugins
+                .output_name(&current)
+                .unwrap_or_else(|| "name unknown".into());
+            lines.push(format!(
+                "- {current} · {name} · plugin output, not listed · selected"
+            ));
+        } else if ricercar_audio::device::classify(&current) == ricercar_audio::DeviceKind::Network
+        {
             // A UPnP renderer: not in the local list, named by the last search.
             let name = ricercar_daemon::network_outputs::known_name(&current)
                 .unwrap_or_else(|| "name unknown".into());

@@ -5,6 +5,7 @@
 pub mod catalog;
 mod content;
 mod host;
+mod output;
 mod rpc;
 pub mod settings;
 pub mod source;
@@ -18,6 +19,7 @@ pub use content::{
     MAX_SHELF_ITEMS, MAX_SHELVES, PluginLyrics, Shelf,
 };
 pub use host::{PlaylistEdited, PluginHost, PluginStatus, RADIO_LIMIT, RunState, TRACKS_MAX};
+pub use output::PluginOutput;
 
 /// Protocol version spoken by this host.
 pub const PROTOCOL: u32 = 1;
@@ -57,6 +59,8 @@ pub struct Capabilities {
     pub details: bool,
     /// `radio.next`.
     pub radio: bool,
+    /// Playback devices of its own (`outputs.changed`, `output.*`).
+    pub outputs: bool,
 }
 
 impl Capabilities {
@@ -75,6 +79,7 @@ impl Capabilities {
             ("playlist_edit", self.playlist_edit),
             ("details", self.details),
             ("radio", self.radio),
+            ("outputs", self.outputs),
         ]
         .into_iter()
         .filter_map(|(n, on)| on.then_some(n))
@@ -83,7 +88,7 @@ impl Capabilities {
 }
 
 /// Every capability name of protocol 1.
-pub const CAPABILITY_NAMES: [&str; 12] = [
+pub const CAPABILITY_NAMES: [&str; 13] = [
     "auth",
     "browse",
     "search",
@@ -96,6 +101,7 @@ pub const CAPABILITY_NAMES: [&str; 12] = [
     "playlist_edit",
     "details",
     "radio",
+    "outputs",
 ];
 
 /// The lists of the `library` capability.
@@ -554,6 +560,28 @@ pub fn parse_plugin_uri(uri: &str) -> Option<(String, String)> {
     Some((id.to_string(), crate::meta::percent_decode(reference)))
 }
 
+/// Prefix of a plugin output's device name.
+pub const OUTPUT_PREFIX: &str = "plugin:";
+
+/// Device name of a plugin's output: `plugin:<plugin id>/<output id>`.
+pub fn output_device(plugin: &str, output: &str) -> String {
+    format!("{OUTPUT_PREFIX}{plugin}/{output}")
+}
+
+/// (plugin id, output id) of a plugin output's device name.
+pub fn parse_output_device(device: &str) -> Option<(&str, &str)> {
+    let (id, output) = device.strip_prefix(OUTPUT_PREFIX)?.split_once('/')?;
+    (crate::config::PluginConfig::valid_id(id) && valid_output_id(output)).then_some((id, output))
+}
+
+/// An output id as the protocol allows it: `[A-Za-z0-9._:-]{1,64}`.
+pub fn valid_output_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -674,5 +702,20 @@ mod tests {
             PluginError::from_code(-1, &"x".repeat(500), None),
             PluginError::Other { message, .. } if message.len() == 200
         ));
+    }
+
+    #[test]
+    fn output_device_names() {
+        let d = output_device("qobuz", "6f1c-2b9e:x.1");
+        assert_eq!(d, "plugin:qobuz/6f1c-2b9e:x.1");
+        assert_eq!(parse_output_device(&d), Some(("qobuz", "6f1c-2b9e:x.1")));
+        assert_eq!(parse_output_device("plugin:qobuz/"), None);
+        assert_eq!(parse_output_device("plugin:qobuz/a b"), None);
+        assert_eq!(parse_output_device("plugin:qobuz"), None);
+        assert_eq!(parse_output_device("upnp:qobuz/a"), None);
+        assert_eq!(
+            parse_output_device(&output_device("qobuz", &"a".repeat(65))),
+            None
+        );
     }
 }

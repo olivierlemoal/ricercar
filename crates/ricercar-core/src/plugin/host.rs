@@ -1,7 +1,7 @@
 //! The plugin host: one supervised process per enabled plugin, typed calls,
 //! URL resolution for the controller, playback reporting and remote control.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
@@ -16,12 +16,14 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use super::output::{self, Listed, OutState};
 use super::rpc::{CallError, Incoming, Rpc, RpcError};
 use super::settings::{self, Setting, Stored};
 use super::{
     AuthBegin, AuthState, AuthStatus, Capabilities, Item, ItemDetails, ItemKind, LibraryList,
-    OutputInfo, PROTOCOL, PluginError, PluginInfo, PluginLyrics, Purpose, Resolved, Resolver,
-    items_of, parse_plugin_uri, valid_ref,
+    OUTPUT_PREFIX, OutputInfo, PROTOCOL, PluginError, PluginInfo, PluginLyrics, PluginOutput,
+    Purpose, Resolved, Resolver, items_of, output_device, parse_plugin_uri, valid_output_id,
+    valid_ref,
 };
 use crate::config::PluginConfig;
 use crate::controller::{Controller, EnqueueAt, Origin, TrackInfo};
@@ -32,6 +34,10 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Lyrics show while the track plays: a slow plugin is passed over.
 const LYRICS_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+/// `output.select` may wake, pair and activate a device.
+const OUTPUT_SELECT_TIMEOUT: Duration = Duration::from_secs(60);
+/// `output.play` may have to select the device again first.
+const OUTPUT_PLAY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Restart delays after a crash; the last one repeats.
 const BACKOFF: [u64; 4] = [1, 2, 5, 30];
 /// A process that ran this long starts the backoff over.
@@ -125,6 +131,12 @@ struct Slot {
     editable: Mutex<std::collections::HashSet<String>>,
     /// `playlists.move` answered "method not found" since the start.
     no_move: AtomicBool,
+    /// Outputs of the running process (`outputs.changed`); `None` until
+    /// its first list.
+    outputs: RwLock<Option<Vec<Listed>>>,
+    /// Outputs the running process was told to use (`output.select`) and
+    /// not released since.
+    selected: Mutex<HashSet<String>>,
 }
 
 struct Inner {
@@ -138,6 +150,24 @@ struct Inner {
     data_root: PathBuf,
     cache_root: PathBuf,
     alive: AtomicBool,
+    /// Bumped whenever a plugin's list of outputs changes.
+    outputs_rev: AtomicU64,
+    /// Names of the plugin outputs listed since start-up, by device name.
+    output_names: Mutex<HashMap<String, String>>,
+    /// Where `output.state` goes: the engine of each output in use.
+    output_engines: Mutex<HashMap<String, crossbeam_channel::Sender<OutState>>>,
+}
+
+/// Whether a plugin output can be played on now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Availability {
+    Listed,
+    /// The plugin is starting, or has not sent its list yet.
+    Pending,
+    /// The plugin's list does not have it.
+    Absent,
+    /// The plugin does not run, or offers no outputs.
+    Off,
 }
 
 /// Starts, supervises and talks to the declared plugins. Cheap to clone.
@@ -146,9 +176,10 @@ pub struct PluginHost {
     inner: Arc<Inner>,
 }
 
-/// Methods that change something on the service: never retried.
+/// Methods that change something on the service or a device: never
+/// retried.
 fn changes_something(method: &str) -> bool {
-    method.starts_with("playlists.") || method == "favorites.set"
+    method.starts_with("playlists.") || method.starts_with("output.") || method == "favorites.set"
 }
 
 /// The system locale (LC_ALL > LC_MESSAGES > LANG), as a BCP 47 tag.
@@ -308,9 +339,10 @@ fn map_call_error(e: CallError) -> PluginError {
 
 impl PluginHost {
     /// `data_root` / `cache_root`: parents of the per-plugin directories
-    /// (`<root>/plugins/<id>/`).
+    /// (`<root>/plugins/<id>/`). Plugin outputs (`plugin:…`) are driven by
+    /// the host created last: create it before the controller.
     pub fn new(version: &str, data_root: PathBuf, cache_root: PathBuf) -> PluginHost {
-        PluginHost {
+        let host = PluginHost {
             inner: Arc::new(Inner {
                 configs: Mutex::new(Vec::new()),
                 slots: Mutex::new(HashMap::new()),
@@ -322,8 +354,20 @@ impl PluginHost {
                 data_root,
                 cache_root,
                 alive: AtomicBool::new(true),
+                outputs_rev: AtomicU64::new(0),
+                output_names: Mutex::new(HashMap::new()),
+                output_engines: Mutex::new(HashMap::new()),
             }),
-        }
+        };
+        let weak = Arc::downgrade(&host.inner);
+        ricercar_audio::register_remote_driver(
+            OUTPUT_PREFIX,
+            Arc::new(move |engine| match weak.upgrade() {
+                Some(inner) => output::drive(PluginHost { inner }, engine),
+                None => output::refuse(engine),
+            }),
+        );
+        host
     }
 
     /// Hook the host to the player: remote control, reporting, and metadata
@@ -442,6 +486,8 @@ impl PluginHost {
                         blocked_until: Mutex::new(None),
                         editable: Mutex::new(Default::default()),
                         no_move: AtomicBool::new(false),
+                        outputs: RwLock::new(None),
+                        selected: Mutex::new(HashSet::new()),
                     });
                     let host = self.clone();
                     let s2 = slot.clone();
@@ -548,6 +594,10 @@ impl PluginHost {
 
     fn set_state(&self, slot: &Slot, state: RunState) {
         slot.status.write().unwrap().state = state;
+        // Only running plugins offer their outputs.
+        if slot.outputs.read().unwrap().is_some() {
+            self.inner.outputs_rev.fetch_add(1, Ordering::SeqCst);
+        }
         self.touch();
     }
 
@@ -556,7 +606,10 @@ impl PluginHost {
         while !slot.stop.load(Ordering::SeqCst) {
             self.set_state(&slot, RunState::Starting);
             let started = Instant::now();
-            match self.run_once(&slot) {
+            let run = self.run_once(&slot);
+            // Its devices went with the process.
+            self.set_outputs(&slot, None);
+            match run {
                 Ok(()) => {}
                 Err(Fatal(msg)) => {
                     tracing::warn!("plugin[{}]: {msg}", slot.cfg.id);
@@ -631,6 +684,8 @@ impl PluginHost {
         slot.declared.store(false, Ordering::SeqCst);
         slot.no_move.store(false, Ordering::SeqCst);
         slot.editable.lock().unwrap().clear();
+        slot.selected.lock().unwrap().clear();
+        self.set_outputs(slot, None);
         let (tx, rx) = mpsc::channel::<Incoming>();
         let rpc = Rpc::start(&id, stdout, stdin, move |m| {
             let _ = tx.send(m);
@@ -718,6 +773,11 @@ impl PluginHost {
 
         loop {
             if slot.stop.load(Ordering::SeqCst) || !self.inner.alive.load(Ordering::SeqCst) {
+                // Devices in use are let go first.
+                let selected = std::mem::take(&mut *slot.selected.lock().unwrap());
+                for o in selected {
+                    let _ = rpc.call("output.release", json!({ "output": o }), SHUTDOWN_GRACE);
+                }
                 Self::kill(&mut child, &rpc, true);
                 return Ok(());
             }
@@ -767,6 +827,9 @@ impl PluginHost {
             "auth.complete" => AUTH_COMPLETE_TIMEOUT,
             "track.resolve" => RESOLVE_TIMEOUT,
             "lyrics.get" => LYRICS_TIMEOUT,
+            "output.select" => OUTPUT_SELECT_TIMEOUT,
+            "output.play" => OUTPUT_PLAY_TIMEOUT,
+            "output.release" => SHUTDOWN_GRACE,
             _ => DEFAULT_TIMEOUT,
         };
         let slot = self.slot(id).ok_or(PluginError::NotRunning)?;
@@ -1307,6 +1370,141 @@ impl PluginHost {
         });
     }
 
+    // ------------------------------------------------------------ outputs
+
+    /// Bumped whenever a plugin's list of outputs changes (cheap to poll).
+    pub fn outputs_revision(&self) -> u64 {
+        self.inner.outputs_rev.load(Ordering::SeqCst)
+    }
+
+    /// Playback devices of the running plugins that declare `outputs`, in
+    /// config order.
+    pub fn outputs(&self) -> Vec<PluginOutput> {
+        let configs = self.inner.configs.lock().unwrap().clone();
+        let slots = self.inner.slots.lock().unwrap();
+        let mut out = Vec::new();
+        for s in configs.iter().filter_map(|c| slots.get(&c.id)) {
+            let st = s.status.read().unwrap();
+            if st.state != RunState::Running || !st.caps.outputs {
+                continue;
+            }
+            out.extend(
+                s.outputs
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .flatten()
+                    .map(|o| PluginOutput {
+                        device: output_device(&s.cfg.id, &o.id),
+                        name: o.name.clone(),
+                        detail: o.detail.clone().unwrap_or_default(),
+                        badge: o.badge.clone().unwrap_or_default(),
+                        plugin_name: st.name.clone(),
+                    }),
+            );
+        }
+        out
+    }
+
+    /// Name of a plugin output (`plugin:<id>/<output id>`) as its plugin
+    /// listed it last since start-up.
+    pub fn output_name(&self, device: &str) -> Option<String> {
+        self.inner.output_names.lock().unwrap().get(device).cloned()
+    }
+
+    fn set_outputs(&self, slot: &Slot, list: Option<Vec<Listed>>) {
+        if let Some(list) = &list {
+            let mut names = self.inner.output_names.lock().unwrap();
+            for o in list {
+                names.insert(output_device(&slot.cfg.id, &o.id), o.name.clone());
+            }
+        }
+        let changed = {
+            let mut outputs = slot.outputs.write().unwrap();
+            let changed = *outputs != list;
+            *outputs = list;
+            changed
+        };
+        if changed {
+            self.inner.outputs_rev.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    pub(super) fn output_availability(&self, plugin: &str, output: &str) -> Availability {
+        let Some(slot) = self.slot(plugin) else {
+            return Availability::Off;
+        };
+        let st = slot.status.read().unwrap();
+        match st.state {
+            RunState::Running if st.caps.outputs => {}
+            RunState::Starting | RunState::Restarting { .. } => return Availability::Pending,
+            _ => return Availability::Off,
+        }
+        match &*slot.outputs.read().unwrap() {
+            None => Availability::Pending,
+            Some(list) if list.iter().any(|o| o.id == output) => Availability::Listed,
+            Some(_) => Availability::Absent,
+        }
+    }
+
+    pub(super) fn is_running(&self, plugin: &str) -> bool {
+        self.slot(plugin).is_some_and(|s| {
+            s.status.read().unwrap().state == RunState::Running && s.rpc.read().unwrap().is_some()
+        })
+    }
+
+    pub(super) fn is_selected(&self, plugin: &str, output: &str) -> bool {
+        self.slot(plugin)
+            .is_some_and(|s| s.selected.lock().unwrap().contains(output))
+    }
+
+    pub(super) fn mark_selected(&self, plugin: &str, output: &str) {
+        if let Some(s) = self.slot(plugin) {
+            s.selected.lock().unwrap().insert(output.to_string());
+        }
+    }
+
+    /// Forget that `output` is selected; true when it was (it is to be
+    /// released).
+    pub(super) fn unmark_selected(&self, plugin: &str, output: &str) -> bool {
+        self.slot(plugin)
+            .is_some_and(|s| s.selected.lock().unwrap().remove(output))
+    }
+
+    pub(super) fn attach_output_engine(
+        &self,
+        device: &str,
+        tx: crossbeam_channel::Sender<OutState>,
+    ) {
+        self.inner
+            .output_engines
+            .lock()
+            .unwrap()
+            .insert(device.to_string(), tx);
+    }
+
+    /// Unless a newer engine of the same output took its place.
+    pub(super) fn detach_output_engine(
+        &self,
+        device: &str,
+        tx: &crossbeam_channel::Sender<OutState>,
+    ) {
+        let mut engines = self.inner.output_engines.lock().unwrap();
+        if engines.get(device).is_some_and(|t| t.same_channel(tx)) {
+            engines.remove(device);
+        }
+    }
+
+    fn route_output_state(&self, plugin: &str, s: OutState) {
+        if !valid_output_id(&s.output) {
+            return;
+        }
+        let device = output_device(plugin, &s.output);
+        if let Some(tx) = self.inner.output_engines.lock().unwrap().get(&device) {
+            let _ = tx.send(s);
+        }
+    }
+
     // ------------------------------------------------------------ incoming
 
     fn handle_incoming(&self, slot: &Arc<Slot>, rpc: &Rpc, m: Incoming) {
@@ -1328,6 +1526,14 @@ impl PluginHost {
                             self.store_auth(&slot.cfg.id, st)
                         }
                         _ => self.refresh_auth(slot),
+                    }
+                } else if method == "outputs.changed" {
+                    let list = output::parse_outputs(params.get("outputs"));
+                    self.set_outputs(slot, Some(list));
+                } else if method == "output.state" {
+                    match serde_json::from_value::<OutState>(params) {
+                        Ok(s) => self.route_output_state(&slot.cfg.id, s),
+                        Err(e) => tracing::debug!("plugin[{}]: bad output.state: {e}", slot.cfg.id),
                     }
                 }
             }

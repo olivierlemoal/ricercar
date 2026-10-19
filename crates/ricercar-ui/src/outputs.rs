@@ -195,9 +195,18 @@ pub fn describe(ui: &Ui, device: &str) -> Shown {
         };
     }
     if ricercar_audio::device::classify(device) == ricercar_audio::DeviceKind::Network {
-        // A UPnP renderer: the name it gave when last found or used.
-        let name = ricercar_daemon::network_outputs::known_name(device)
-            .unwrap_or_else(|| t("UPnP renderer").to_string());
+        let name = match ricercar_core::plugin::parse_output_device(device) {
+            // A plugin's device: the name its plugin listed it under.
+            Some((id, _)) => ui.ctx.plugins.output_name(device).unwrap_or_else(|| {
+                tf(
+                    "{plugin} device",
+                    &[("plugin", &crate::plugins::name_of(ui, id))],
+                )
+            }),
+            // A UPnP renderer: the name it gave when last found or used.
+            None => ricercar_daemon::network_outputs::known_name(device)
+                .unwrap_or_else(|| t("UPnP renderer").to_string()),
+        };
         return Shown {
             label: name.clone(),
             playing: name,

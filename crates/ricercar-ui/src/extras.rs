@@ -616,6 +616,7 @@ pub fn refresh_devices(ui: &Ui) {
                 absent: false,
                 shared: d.kind == ricercar_audio::DeviceKind::Virtual,
                 network: false,
+                badge: "".into(),
                 detail: "".into(),
                 selected: d.name == current,
                 desc: d
@@ -658,6 +659,7 @@ pub fn refresh_devices(ui: &Ui) {
         DeviceRow {
             selected: r.device == current,
             network: true,
+            badge: "UPNP".into(),
             detail: if r.model.is_empty() {
                 unnamed.to_string()
             } else {
@@ -669,10 +671,31 @@ pub fn refresh_devices(ui: &Ui) {
             ..Default::default()
         }
     }));
+    // Devices offered by plugins: they fetch the plugin's items themselves.
+    rows.extend(ui.ctx.plugins.outputs().into_iter().map(|o| {
+        DeviceRow {
+            selected: o.device == current,
+            network: true,
+            // Badges are capitals; empty keeps the generic NETWORK one.
+            badge: o.badge.to_uppercase().into(),
+            detail: if o.detail.is_empty() {
+                o.plugin_name
+            } else {
+                o.detail
+            }
+            .into(),
+            desc: o.name.into(),
+            name: o.device.into(),
+            ..Default::default()
+        }
+    }));
     if !rows.iter().any(|r| r.selected) {
         let null = current == "null";
         let network =
             ricercar_audio::device::classify(&current) == ricercar_audio::DeviceKind::Network;
+        // A plugin's device it does not list now: not connected.
+        let plugin = ricercar_core::plugin::parse_output_device(&current)
+            .map(|(id, _)| crate::plugins::name_of(ui, id));
         // A PipeWire output that is not connected now: its remembered name.
         let node = ricercar_audio::device::pipewire_node(&current);
         let absent = node.map(|n| {
@@ -684,8 +707,13 @@ pub fn refresh_devices(ui: &Ui) {
             // claimed absent).
             DeviceRow {
                 desc: crate::outputs::describe(ui, &current).label.into(),
-                absent: renderers.is_some(),
-                detail: unnamed.into(),
+                absent: plugin.is_some() || renderers.is_some(),
+                badge: if plugin.is_none() {
+                    "UPNP".into()
+                } else {
+                    "".into()
+                },
+                detail: plugin.unwrap_or_else(|| unnamed.to_string()).into(),
                 network: true,
                 name: current.into(),
                 selected: true,

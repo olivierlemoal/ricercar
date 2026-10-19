@@ -123,7 +123,7 @@ Most Linux players either sound right or look right. ricercar tries to do both:
 - **UPnP AV MediaRenderer + OpenHome** (Product, Playlist, Info, Time, Volume) on one device
 - **UPnP MediaServer**: browse your library from any DLNA app
 - **Network outputs**: play to a UPnP / DLNA renderer (a network amplifier,
-  a streamer) chosen like any other output
+  a streamer), or to a device a plugin offers, chosen like any other output
 - **Choice of network interface**: announce and serve on one interface
   only (VPN, Docker, virtual machines)
 - **MPRIS**: media keys, desktop widgets, `playerctl`
@@ -381,6 +381,11 @@ and streams go out as they are (FLAC stays FLAC); CUE tracks, SACD images
 and DSD files are sent as PCM WAV. ReplayGain and the preamp do not apply.
 `ricercar --print-devices` lists the renderers too (`upnp:<uuid>`, usable
 as `--device` or `device` in `[audio]`).
+
+A [plugin](docs/plugins.md#outputs-optional) can also offer devices of its
+own (those of a streaming service's casting protocol, say); they show in
+the same list. On such a device the plugin's tracks play straight from the
+service, the device fetching them itself; tracks from elsewhere are skipped.
 
 ## 🎚️ Bit-perfect, for real
 

@@ -29,15 +29,20 @@ the UI (`player.rs::wire`), MPRIS, UPnP eventing and the scrobblers. Nothing
 reads the player directly. Subscribe with `Controller::subscribe()`, read the
 current `CtlState` with `Controller::lock()` (keep the guard short).
 
-Network outputs (`upnp:<uuid>`, `DeviceKind::Network`) have no sink:
-`spawn_player` hands their commands to the driver registered for their
-prefix (`register_remote_driver`). `ricercar_upnp::output::install`
-registers `upnp:`, which drives the renderer over AVTransport /
-RenderingControl, serves it each track from its own HTTP server
-(`output/serve.rs`) and turns the polled transport state into the usual
-`EngineEvent`s, plus `EngineEvent::Volume` for the renderer's own volume.
-The controller and everything downstream are unchanged. Tests:
-`output/tests.rs` plays to a ricercar renderer on loopback.
+Network outputs (`upnp:<uuid>`, `plugin:<id>/<output>`, `DeviceKind::Network`)
+have no sink: `spawn_player` hands their commands to the driver registered
+for their prefix (`register_remote_driver`). `ricercar_upnp::output::install`
+registers `upnp:`, which drives the
+renderer over AVTransport / RenderingControl, serves it each track from its
+own HTTP server (`output/serve.rs`) and turns the polled transport state into
+the usual `EngineEvent`s, plus `EngineEvent::Volume` for the renderer's own
+volume. The controller and everything downstream are unchanged. Tests:
+`output/tests.rs` plays to a ricercar renderer on loopback. `PluginHost::new`
+registers `plugin:` (create it before the controller): `plugin/output.rs`
+turns engine commands into `output.*` requests and `output.state`
+notifications into engine events (`Machine`, I/O-free and unit-tested), and
+the controller hands such an output plugin items by their `plugin://` URI,
+never resolved (docs/plugins.md, "Outputs").
 
 ### Cue sheets
 

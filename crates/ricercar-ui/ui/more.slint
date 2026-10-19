@@ -387,7 +387,7 @@ export component SettingsPage inherits PageScroll {
                         }
                         if d.hardware: Badge { y: (parent.height - self.height) / 2; text: @tr("BIT-PERFECT"); tint: Theme.good; }
                         if d.shared: Badge { y: (parent.height - self.height) / 2; text: @tr("SHARED"); tint: Theme.warn; }
-                        if d.network: Badge { y: (parent.height - self.height) / 2; text: @tr("NETWORK"); tint: Theme.warn; }
+                        if d.network: Badge { y: (parent.height - self.height) / 2; text: d.badge != "" ? d.badge : @tr("NETWORK"); tint: Theme.warn; }
                         if d.absent: Badge { y: (parent.height - self.height) / 2; text: @tr("NOT CONNECTED"); tint: Theme.warn; }
                         if d.dsd-badge != "": Badge { y: (parent.height - self.height) / 2; text: d.dsd-badge; tint: Theme.accent; }
                         if d.hardware: IconButton {

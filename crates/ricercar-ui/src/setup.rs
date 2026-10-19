@@ -177,14 +177,14 @@ pub fn summary_lines(s: &Summary) -> Vec<(String, String)> {
     ]
 }
 
-/// Listed outputs, a PipeWire one chosen earlier and UPnP renderers; not
-/// the placeholder rows of the null and file sinks.
+/// Listed outputs, a PipeWire one chosen earlier, UPnP renderers and
+/// plugins' devices; not the placeholder rows of the null and file sinks.
 fn offerable(r: &DeviceRow) -> bool {
     r.hardware || r.shared || r.absent || r.network
 }
 
-/// Outputs offered: hardware first, then shared ones, then UPnP renderers,
-/// in list order.
+/// Outputs offered: hardware first, then shared ones, then network
+/// outputs (renderers, plugins' devices), in list order.
 pub fn offered(rows: &[DeviceRow]) -> Vec<DeviceRow> {
     let mut out: Vec<DeviceRow> = rows.iter().filter(|r| offerable(r)).cloned().collect();
     out.sort_by_key(|r| (!r.hardware, r.network));
@@ -615,7 +615,7 @@ fn fill_summary(ui: &Ui) {
     let output = if dev.name.is_empty() {
         String::new()
     } else if dev.network {
-        // `upnp:<uuid>` says nothing to the reader: its name.
+        // `upnp:<uuid>`, `plugin:<id>/<output>` say nothing to the reader: its name.
         dev.desc.to_string()
     } else {
         format!("{} ({})", dev.desc, dev.name)

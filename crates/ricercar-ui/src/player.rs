@@ -838,7 +838,11 @@ fn update_chain(ui: &Ui, st: &CtlState) {
             format!(
                 "{} · {}",
                 output.label,
-                t("UPnP renderer (decodes the stream itself)")
+                if ricercar_core::plugin::parse_output_device(&c.device).is_some() {
+                    t("plugin device (fetches and decodes the tracks itself)")
+                } else {
+                    t("UPnP renderer (decodes the stream itself)")
+                }
             ),
             1,
         ),

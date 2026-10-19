@@ -65,7 +65,7 @@ component SetupOutput inherits Rectangle {
         }
         if dev.hardware: Badge { y: (parent.height - self.height) / 2; text: @tr("BIT-PERFECT"); tint: Theme.good; }
         if dev.shared: Badge { y: (parent.height - self.height) / 2; text: @tr("SHARED"); tint: Theme.warn; }
-        if dev.network: Badge { y: (parent.height - self.height) / 2; text: @tr("NETWORK"); tint: Theme.warn; }
+        if dev.network: Badge { y: (parent.height - self.height) / 2; text: dev.badge != "" ? dev.badge : @tr("NETWORK"); tint: Theme.warn; }
         if dev.absent: Badge { y: (parent.height - self.height) / 2; text: @tr("NOT CONNECTED"); tint: Theme.warn; }
     }
 }

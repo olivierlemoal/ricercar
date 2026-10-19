@@ -393,13 +393,15 @@ pub fn startup(args: Args, hooks: Hooks) -> Result<AppContext, Box<dyn std::erro
     let covers = Arc::new(CoverCache::new(CoverCache::default_dir()));
 
     network_outputs::install();
-    let ctl = Arc::new(Controller::new(lib.clone(), &cfg.audio.device));
-    network_outputs::attach(&ctl);
+    // Before the controller: it drives `plugin:` outputs, the configured
+    // one included.
     let plugins = ricercar_core::plugin::PluginHost::new(
         env!("CARGO_PKG_VERSION"),
         config::data_dir(),
         config::cache_dir(),
     );
+    let ctl = Arc::new(Controller::new(lib.clone(), &cfg.audio.device));
+    network_outputs::attach(&ctl);
     ctl.set_resolver(Arc::new(plugins.clone()));
     ctl.set_continuous(cfg.audio.continuous_playback);
     ctl.set_fixed_volume(cfg.audio.fixed_volume);

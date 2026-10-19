@@ -26,8 +26,9 @@ pub enum DeviceKind {
     Null,
     /// Sink writing raw container bytes to a file (testing / bit-exact checks).
     File,
-    /// UPnP renderer on the network (`upnp:<uuid>`): it fetches and decodes
-    /// the stream itself, out of our sight.
+    /// Output on the network that fetches and decodes the stream itself,
+    /// out of our sight: a UPnP renderer (`upnp:<uuid>`) or a plugin's
+    /// device (`plugin:<plugin id>/<output id>`).
     Network,
 }
 
@@ -49,7 +50,7 @@ pub fn classify(name: &str) -> DeviceKind {
         DeviceKind::File
     } else if name.starts_with("hw:") {
         DeviceKind::Hardware
-    } else if name.starts_with("upnp:") {
+    } else if name.starts_with("upnp:") || name.starts_with("plugin:") {
         DeviceKind::Network
     } else {
         DeviceKind::Virtual
@@ -439,6 +440,13 @@ mod tests {
         assert_eq!(c[&0].0, "HD-Audio Generic");
         assert_eq!(c[&1].0, "FiiO K7");
         assert_eq!(c[&1].1, "FiiO FiiO K7 at usb-0000:00:14.0-2, high speed");
+    }
+
+    #[test]
+    fn network_outputs_are_classified() {
+        assert_eq!(classify("upnp:1e5ef69a"), DeviceKind::Network);
+        assert_eq!(classify("plugin:qobuz/6f1c2b9e"), DeviceKind::Network);
+        assert_eq!(classify("pipewire"), DeviceKind::Virtual);
     }
 
     #[test]
